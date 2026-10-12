@@ -1,0 +1,10 @@
+{
+  "name": "moysklad-wholesale-markup",
+  "private": true,
+  "type": "module",
+  "description": "Заказы оптовиков с наценкой отгрузок ниже порога",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  }
+}

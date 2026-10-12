@@ -1,0 +1,22 @@
+---
+description: Как ходить в JSON API МоегоСклада и не упираться в лимит
+alwaysApply: true
+---
+
+# Запросы к МоемуСкладу
+
+База `https://api.moysklad.ru/api/remap/1.2`. Токен из поля страницы (`localStorage` `moysklad.token`) или `MOYSKLAD_TOKEN`. В строке есть `:` — Basic, иначе Bearer. `Accept: application/json;charset=utf-8`. `Accept-Encoding` не задавать.
+
+Проверка одного заказа: из ссылки `#customerorder/edit?id=`, `#demand/edit`, `#retaildemand/edit` или href сущности. Заказ — `GET /entity/customerorder/{id}?expand=agent`. Поле `customerOrder` у отгрузки не фильтруется. Отгрузки берутся из массива `demands` заказа, каждая — `GET /entity/demand/{id}?expand=customerOrder,agent`. При «Проведённые» непроведённые пропускаются после чтения. Позиции как у месяца. Себестоимость — тот же проход приёмок, момент отсечения — момент заказа. Нет отгрузок — позиции `GET /entity/customerorder/{id}/positions?expand=assortment`. Ссылка на продажу этого заказа добавляется к отгрузкам. Ссылка на отгрузку или продажу без заказа проверяет только этот документ.
+
+Отгрузки: `GET /entity/demand`. Продажи: `GET /entity/retaildemand`. Фильтр у обоих `moment`, `applicable=true`, `agent=href`. Несколько `agent=` в одном поле — это ИЛИ. Контрагентов слать пачками по 12. `expand=customerOrder,agent`. Позиции: `GET /entity/{demand|retaildemand}/{id}/positions?expand=assortment`, без `fields=stock`. Страница списка — 1000. Максимум API тоже 1000.
+
+Закупочные цены — один проход `GET /entity/supply`: `filter=applicable=true;moment<=самый поздний момент заказа`, `order=moment,desc`, `expand=positions.assortment`, страница 100. От новых приёмок к старым, пока у каждого товара продажи не найдена своя приёмка строго до заказа. Если таких товаров осталось не больше 12 и просмотренные приёмки уже старше их заказов — добрать каждому одну последнюю: `limit=1`, `assortment=href`, `moment<заказ`. Если раскрытых позиций меньше, чем `positions.meta.size`, добрать `GET /entity/supply/{id}/positions?expand=assortment`. Отчёт «Обороты» для себестоимости не запрашивать. Не делать отдельный запрос на каждый товар с самого начала.
+
+Ручное снижение цены — `GET /entity/{demand|retaildemand|customerorder}/{id}/audit` только у документов ниже порога и их заказов. События контекста отдельно не запрашивать. Считается `eventType=update` без `supportAccess`, кроме JSON API, сценариев и импорта. Касса и сайт входят. Цена позиции может быть полем `diff.price`. Список `positions` в аудите — пары `{ oldValue, newValue }`, цена в рублях. Имена сотрудников — один список `/entity/employee`, включая архив.
+
+Лимит общий на пользователя вместе с интерфейсом МоегоСклада: заголовки `X-RateLimit-Limit`, `X-Lognex-Retry-TimeInterval`, `X-RateLimit-Remaining`, `X-Lognex-Reset`, `X-Lognex-Retry-After`. Живой бюджет — 45 запросов за 3000 мс. Параллельность в заголовках нет: сверх лимита приходит 429 с кодом 1073 или `X-Lognex-Auth` `1073` / `429005`. Исторический потолок — 5.
+
+Держать паузу не меньше 500 мс между стартами и не больше 2 запросов сразу. Заголовки ответа не должны снова разгонять клиент до 45/3 с: бюджет делят с открытым интерфейсом. На 429/503 ждать не меньше `max(Retry-After, 3000)`, при 1073 снижать параллельность на 1, до 1. Фраза «МойСклад временно ограничивает запросы. Повторите через минуту.» — наша, после исчерпания попыток.
+
+`src/*.js` читается при старте `node server.js`. После правки сервера перезапустить процесс, который слушает 4173 (`OwningProcess`), не обёртку shell и не чужой node. Статику из `public/` перезапуск не нужен. На этой машине shell запускать с полными правами: песочница не стартует.

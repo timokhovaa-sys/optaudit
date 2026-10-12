@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Аудит отгрузок | МойСклад</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23111111'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-size='12' font-family='sans-serif' fill='%23f5b942'%3EMC%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">К содержимому</a>
+
+  <header class="top">
+    <div class="brand"><span class="logo">МС</span> Наценка</div>
+    <div class="top-user">
+      <span id="account-name">МойСклад</span>
+      <span id="account-role" class="top-role"></span>
+    </div>
+  </header>
+
+  <main class="page" id="main-content">
+    <div class="page-head">
+      <h1>Аудит отгрузок</h1>
+      <details class="help">
+        <summary>Как считается</summary>
+        <p>Сумма — колонка «Сумма». Себестоимость — цена последней приёмки этого товара до появления заказа, × количество. У продажи без заказа берётся момент продажи. Нет приёмки до этой даты — закупка неизвестна. Наценка — (сумма − себестоимость) / себестоимость. Средняя — так же по всем строкам месяца с известной закупкой. Упущено — разница до порога по позициям ниже него. В списке заказ, если хотя бы одна отгрузка или продажа месяца ниже порога. Диаграмма — доля удачных отгрузок и продаж и доля ниже порога. График года — сохранённые проверки: продажи, средняя наценка, прибыль по тем же строкам и упущенная выгода. Бейдж «снизили цену» — сотрудник сам уменьшил цену позиции, и она ниже порога. «Снизили» копирует такие заказы: контрагент, ссылка на заказ и эти позиции. «Проверить» считает один заказ по ссылке тем же правилом: его отгрузки и продажи, а если их нет — позиции самого заказа. Порог и «Проведённые» берутся из формы выше. Месячный отчёт при этом не заменяется.</p>
+      </details>
+    </div>
+
+    <form id="filters" class="panel filters">
+      <label class="field">
+        <span>Месяц</span>
+        <input id="month" name="month" type="month" required>
+      </label>
+      <label class="field field-narrow">
+        <span>Порог, %</span>
+        <input id="threshold" name="threshold" type="number" min="0" max="1000" step="0.1" value="18" required>
+      </label>
+      <label class="check">
+        <input id="postedOnly" name="postedOnly" type="checkbox" checked>
+        <span>Проведённые</span>
+      </label>
+      <div class="filter-actions">
+        <button id="submit" class="btn btn-primary" type="submit">Собрать</button>
+        <button id="stop" class="btn" type="button" disabled>Стоп</button>
+      </div>
+      <div id="token-saved" class="token-saved" hidden>
+        <span>Токен сохранён</span>
+        <button id="token-edit" class="btn btn-ghost" type="button">Изменить</button>
+      </div>
+      <label id="token-field" class="field field-token">
+        <span>Токен</span>
+        <input id="token" name="token" type="password" autocomplete="off" spellcheck="false" placeholder="Токен или логин:пароль">
+      </label>
+      <div id="token-hint" class="hint"></div>
+    </form>
+
+    <form id="order-form" class="panel filters order-form">
+      <label class="field field-link">
+        <span>Ссылка на заказ</span>
+        <input id="order-link" type="text" placeholder="Вставьте ссылку из МоегоСклада" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="filter-actions">
+        <button id="order-submit" class="btn btn-primary" type="submit">Проверить</button>
+      </div>
+      <p class="hint">Порог и «Проведённые» — из формы выше. Подойдёт ссылка на заказ, отгрузку или продажу.</p>
+    </form>
+
+    <div id="progress" class="progress-wrap" hidden>
+      <div class="progress"><div class="bar" id="bar"></div></div>
+      <div id="progress-text" class="hint">Собираю отгрузки…</div>
+    </div>
+
+    <div id="error" class="notice notice-danger" hidden>
+      <div id="error-text"></div>
+    </div>
+
+    <section id="order-check" class="stack order-check" hidden></section>
+
+    <section id="year" class="panel year" aria-label="График за год">
+      <div class="year-head">
+        <div>
+          <h2 id="year-title">Год</h2>
+          <p class="hint">Деньги на одной шкале, наценка — на правой</p>
+        </div>
+        <div id="year-toggles" class="year-toggles"></div>
+      </div>
+      <div id="year-plot" class="year-plot"></div>
+      <p id="year-empty" class="hint" hidden></p>
+    </section>
+
+    <section id="results" class="stack" hidden>
+      <div id="stats" class="panel metric-grid"></div>
+      <div id="share" class="panel share" hidden></div>
+      <div id="suggestions" class="stack"></div>
+      <div id="toolbar" class="toolbar">
+        <input id="search" class="search" type="search" placeholder="Контрагент, заказ, артикул, товар" autocomplete="off" aria-label="Поиск">
+        <select id="sort" aria-label="Сортировка">
+          <option value="markup">Низкая наценка</option>
+          <option value="date">Дата отгрузки</option>
+          <option value="agent">Контрагент</option>
+        </select>
+        <label class="check">
+          <input id="only-low" type="checkbox" checked>
+          <span>Только ниже порога</span>
+        </label>
+        <div class="toolbar-actions">
+          <button id="copy-orders" class="btn" type="button" title="Контрагент, ссылка на отгрузку и товары ниже порога">Ссылки</button>
+          <button id="copy-manual" class="btn" type="button" title="Заказы, где цену снизили вручную: контрагент, ссылка на заказ и эти позиции">Снизили</button>
+          <button id="expand-all" class="btn" type="button">Развернуть</button>
+          <button id="collapse-all" class="btn btn-ghost" type="button">Свернуть</button>
+        </div>
+      </div>
+      <div id="copy-fallback" class="panel copy-fallback" hidden>
+        <p class="hint">Буфер недоступен. Ссылки выделены — Ctrl+C.</p>
+        <textarea id="copy-text" class="copy-text" readonly rows="4"></textarea>
+      </div>
+      <div id="jump" class="chip-row"></div>
+      <div id="orders" class="stack"></div>
+      <div id="unlinked" class="stack"></div>
+    </section>
+  </main>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
