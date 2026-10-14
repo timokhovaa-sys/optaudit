@@ -1,25 +1,164 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  agentDocuments,
+  agentMonthPoints,
   averageMarkup,
   groupReport,
   monthTotals,
   lineEconomics,
   missedProfit,
   monthBounds,
+  selectAgentsByName,
   summarizeShipment,
   tagVariants,
+  yearBounds,
   addSupplyPrices,
   lastSupplyUnitMinor,
   supplyDocumentPrices,
 } from '../src/markup.js'
 import { demandFilter, documentShare, parseOrderLink, saleDocumentLinks } from '../src/report.js'
+import { salesReportHtml } from '../src/sales-pdf.js'
 
 const rub = {
   vatEnabled: true,
   vatIncluded: true,
   rate: { value: 1 },
 }
+
+test('year bounds cover 1 January through 31 December', () => {
+  assert.deepEqual(yearBounds(2026), {
+    year: 2026,
+    from: '2026-01-01 00:00:00',
+    to: '2026-12-31 23:59:59',
+  })
+  assert.throws(() => yearBounds('2026-10'), /Год/)
+})
+
+test('agent search prefers one exact name and folds yo', () => {
+  const agents = [
+    { id: '1', name: 'Иванова' },
+    { id: '2', name: 'Иванов' },
+    { id: '3', name: 'Ёлка и Ко', archived: true },
+  ]
+  assert.equal(selectAgentsByName(agents, 'и').status, 'short')
+  assert.equal(selectAgentsByName(agents, 'Иванов').status, 'one')
+  assert.equal(selectAgentsByName(agents, 'Иванов').matches[0].id, '2')
+  assert.equal(selectAgentsByName(agents, 'иван').status, 'many')
+  assert.equal(selectAgentsByName(agents, 'иван').matches.length, 2)
+  const folded = selectAgentsByName(agents, 'елка')
+  assert.equal(folded.status, 'one')
+  assert.equal(folded.matches[0].id, '3')
+  assert.equal(folded.matches[0].archived, true)
+  assert.equal(selectAgentsByName(agents, 'нет такого').status, 'none')
+})
+
+test('agent month points use the same sales, markup and missed as a month', () => {
+  const points = agentMonthPoints([
+    {
+      moment: '2026-01-15 10:00:00',
+      lines: [
+        { saleMinor: 11800, costMinor: 10000, costKnown: true, excluded: false, markup: 18 },
+        { saleMinor: 10000, costMinor: 10000, costKnown: true, excluded: false, markup: 0 },
+      ],
+    },
+    {
+      moment: '2026-03-02 10:00:00',
+      lines: [
+        { saleMinor: 5000, costMinor: 4000, costKnown: true, excluded: false, markup: 25 },
+      ],
+    },
+    {
+      moment: '2025-12-01 10:00:00',
+      lines: [
+        { saleMinor: 9000, costMinor: 1000, costKnown: true, excluded: false, markup: 800 },
+      ],
+    },
+  ], 18, 2026)
+  assert.deepEqual(points.map((point) => point.month), ['2026-01', '2026-03'])
+  assert.equal(points[0].sales, 218)
+  assert.equal(points[0].profit, 18)
+  assert.equal(points[0].netProfit, 10.37)
+  assert.equal(points[0].averageMarkup, 9)
+  assert.equal(points[0].missed, 18)
+  assert.equal(points[1].missed, 0)
+  assert.equal(points[1].sales, 50)
+  assert.equal(points[1].netProfit, 8.25)
+})
+
+test('sales pdf lists the shipment date, number and sum without profit', () => {
+  const html = salesReportHtml({
+    agentName: 'Иванов <опт>',
+    year: 2026,
+    months: [{ month: '2026-01', sales: 218 }],
+    documents: [{ moment: '2026-01-15 10:00:00', name: '0007', sum: 218 }],
+  })
+  assert.match(html, /15\.01\.2026/)
+  assert.match(html, /0007/)
+  assert.match(html, /218,00/)
+  assert.match(html, /Иванов &lt;опт&gt;/)
+  assert.equal(html.includes('Прибыль'), false)
+  assert.equal(html.includes('Чистая'), false)
+})
+
+test('sales pdf follows the selected chart series', () => {
+  const html = salesReportHtml({
+    agentName: 'Иванов',
+    year: 2026,
+    series: ['sales', 'profit', 'net'],
+    threshold: 18,
+    months: [{ month: '2026-01', sales: 218, profit: 18, netProfit: 10.37, averageMarkup: 9, missed: 18 }],
+    documents: [{
+      moment: '2026-01-15 10:00:00',
+      name: '0007',
+      sum: 218,
+      sales: 218,
+      profit: 18,
+      netProfit: 10.37,
+      markup: 9,
+      missed: 18,
+    }],
+  })
+  assert.match(html, /Продажи, Прибыль, Чистая прибыль/)
+  assert.match(html, /fill="#b7791f"/)
+  assert.match(html, /fill="#1d4e89"/)
+  assert.match(html, /18,00/)
+  assert.match(html, /10,37/)
+  assert.equal(html.includes('Упущено'), false)
+  assert.equal(html.includes('Наценка'), false)
+})
+
+test('agent documents keep the shipment date, number and sum', () => {
+  const rows = agentDocuments([
+    { moment: '2026-03-02 09:00:00', name: '20', saleExVat: 50, kind: 'demand' },
+    { moment: '2026-01-15 10:00:00', name: '7', saleExVat: 218, kind: 'retaildemand' },
+    { moment: '2025-12-01 10:00:00', name: '1', saleExVat: 90, kind: 'demand' },
+  ], 2026)
+  assert.deepEqual(rows, [
+    {
+      moment: '2026-01-15 10:00:00', name: '7', kind: 'retaildemand',
+      sum: 218, sales: 218, profit: null, netProfit: null, markup: null, missed: null,
+    },
+    {
+      moment: '2026-03-02 09:00:00', name: '20', kind: 'demand',
+      sum: 50, sales: 50, profit: null, netProfit: null, markup: null, missed: null,
+    },
+  ])
+  const priced = agentDocuments([{
+    moment: '2026-01-15 10:00:00',
+    name: '0007',
+    kind: 'demand',
+    lines: [
+      { saleMinor: 11800, costMinor: 10000, costKnown: true, excluded: false, markup: 18 },
+      { saleMinor: 10000, costMinor: 10000, costKnown: true, excluded: false, markup: 0 },
+    ],
+  }], 2026, 18)
+  assert.equal(priced[0].sales, 218)
+  assert.equal(priced[0].profit, 18)
+  assert.equal(priced[0].netProfit, 10.37)
+  assert.equal(priced[0].markup, 9)
+  assert.equal(priced[0].missed, 18)
+})
 
 test('month bounds cover the whole month, including February in a leap year', () => {
   assert.deepEqual(monthBounds('2026-10'), {

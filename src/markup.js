@@ -52,6 +52,104 @@ export function assertThreshold(value) {
   return threshold
 }
 
+export function yearBounds(year) {
+  const value = Number(year)
+  if (!Number.isInteger(value) || value < 2000 || value > 2100) {
+    throw new Error('Год укажите в формате ГГГГ')
+  }
+  return {
+    year: value,
+    from: `${value}-01-01 00:00:00`,
+    to: `${value}-12-31 23:59:59`,
+  }
+}
+
+export function foldName(value) {
+  return String(value ?? '')
+    .replaceAll('ё', 'е')
+    .replaceAll('Ё', 'е')
+    .toLocaleLowerCase('ru')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export function selectAgentsByName(agents, query) {
+  const needle = foldName(query)
+  if (needle.length < 2) return { status: 'short', matches: [] }
+  const matches = (agents || []).flatMap((agent) => {
+    if (!agent?.id) return []
+    const name = String(agent.name || '').trim() || 'Контрагент'
+    const folded = foldName(name)
+    if (!folded.includes(needle)) return []
+    return [{ id: agent.id, name, archived: Boolean(agent.archived), exact: folded === needle }]
+  }).sort((left, right) => left.name.localeCompare(right.name, 'ru') || String(left.id).localeCompare(String(right.id)))
+  if (matches.length === 0) return { status: 'none', matches: [] }
+  const exact = matches.filter((agent) => agent.exact)
+  const pool = exact.length ? exact : matches
+  if (pool.length === 1) return { status: 'one', matches: pool }
+  return { status: 'many', matches: pool }
+}
+
+export const SALES_FEE_RATE = 0.035
+
+export function netProfitMinor(salesMinor, profitMinor) {
+  const sales = Number(salesMinor) || 0
+  const profit = Number(profitMinor) || 0
+  const fee = Math.round(sales * SALES_FEE_RATE)
+  return profit - fee
+}
+
+export function agentDocuments(shipments, year, threshold = 18) {
+  const prefix = `${year}-`
+  return (shipments || []).flatMap((shipment) => {
+    const moment = String(shipment?.moment || '')
+    if (!moment.startsWith(prefix)) return []
+    const lines = shipment.lines || []
+    const money = lines.length ? monthTotals(lines) : null
+    const listed = Number(shipment?.saleExVat)
+    const sales = money
+      ? (minorToRub(money.salesMinor) ?? 0)
+      : (Number.isFinite(listed) ? listed : 0)
+    const profitMinor = money ? money.profitMinor : null
+    return [{
+      moment,
+      name: String(shipment?.name || ''),
+      kind: shipment?.kind === 'retaildemand' ? 'retaildemand' : 'demand',
+      sum: sales,
+      sales,
+      profit: profitMinor == null ? null : (minorToRub(profitMinor) ?? 0),
+      netProfit: profitMinor == null ? null : (minorToRub(netProfitMinor(money.salesMinor, profitMinor)) ?? 0),
+      markup: lines.length ? averageMarkup(lines) : null,
+      missed: lines.length ? (minorToRub(missedProfit(lines, threshold).amountMinor) ?? 0) : null,
+    }]
+  }).sort((left, right) => left.moment.localeCompare(right.moment) || left.name.localeCompare(right.name, 'ru'))
+}
+
+export function agentMonthPoints(shipments, threshold, year) {
+  const prefix = `${year}-`
+  const byMonth = new Map()
+  for (const shipment of shipments || []) {
+    const month = String(shipment?.moment || '').slice(0, 7)
+    if (!month.startsWith(prefix) || !/^\d{4}-\d{2}$/.test(month)) continue
+    const list = byMonth.get(month) || []
+    list.push(shipment)
+    byMonth.set(month, list)
+  }
+  return [...byMonth.keys()].sort().map((month) => {
+    const lines = byMonth.get(month).flatMap((shipment) => shipment.lines || [])
+    const money = monthTotals(lines)
+    const missed = missedProfit(lines, threshold)
+    return {
+      month,
+      sales: minorToRub(money.salesMinor) ?? 0,
+      profit: minorToRub(money.profitMinor) ?? 0,
+      netProfit: minorToRub(netProfitMinor(money.salesMinor, money.profitMinor)) ?? 0,
+      averageMarkup: averageMarkup(lines),
+      missed: minorToRub(missed.amountMinor) ?? 0,
+    }
+  })
+}
+
 function finite(value, fallback = 0) {
   const number = Number(value)
   return Number.isFinite(number) ? number : fallback

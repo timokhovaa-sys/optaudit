@@ -10,6 +10,17 @@ const orderForm = document.querySelector('#order-form')
 const orderLinkInput = document.querySelector('#order-link')
 const orderSubmit = document.querySelector('#order-submit')
 const orderCheck = document.querySelector('#order-check')
+const agentForm = document.querySelector('#agent-form')
+const agentNameInput = document.querySelector('#agent-name')
+const agentSubmit = document.querySelector('#agent-submit')
+const agentChart = document.querySelector('#agent-chart')
+const agentTitle = document.querySelector('#agent-title')
+const agentToggles = document.querySelector('#agent-toggles')
+const agentMatches = document.querySelector('#agent-matches')
+const agentPlot = document.querySelector('#agent-plot')
+const agentEmpty = document.querySelector('#agent-empty')
+const agentPdfButton = document.querySelector('#agent-pdf')
+let clientDynamics = null
 const progressBox = document.querySelector('#progress')
 const progressText = document.querySelector('#progress-text')
 const bar = document.querySelector('#bar')
@@ -76,6 +87,11 @@ orderForm.addEventListener('submit', (event) => {
   event.preventDefault()
   runOrderCheck()
 })
+agentForm.addEventListener('submit', (event) => {
+  event.preventDefault()
+  runAgentDynamics()
+})
+agentPdfButton.addEventListener('click', () => downloadAgentPdf())
 
 stopButton.addEventListener('click', () => controller?.abort())
 document.querySelector('#token-edit').addEventListener('click', () => {
@@ -100,6 +116,7 @@ monthInput.addEventListener('change', () => {
 thresholdInput.addEventListener('change', () => {
   savePrefs()
   renderYearChart(chartYear(), yearRows)
+  renderClientChart()
 })
 document.querySelector('#expand-all').addEventListener('click', () => setDetails(true))
 document.querySelector('#collapse-all').addEventListener('click', () => setDetails(false))
@@ -187,6 +204,8 @@ function setBusy(busy) {
   submitButton.disabled = busy
   orderSubmit.disabled = busy
   orderLinkInput.disabled = busy
+  agentSubmit.disabled = busy
+  agentNameInput.disabled = busy
   stopButton.disabled = !busy
   if (busy) progressBox.hidden = false
 }
@@ -274,6 +293,221 @@ async function runOrderCheck() {
     showError(error.message || 'Не удалось проверить заказ')
   } finally {
     setBusy(false)
+  }
+}
+
+async function runAgentDynamics(agentId) {
+  const name = agentNameInput.value.trim()
+  if (!agentId && name.length < 2) {
+    showError(name ? 'Введите хотя бы две буквы наименования' : 'Введите наименование')
+    agentNameInput.focus()
+    return
+  }
+  savedRequest += 1
+  controller?.abort()
+  controller = new AbortController()
+  setBusy(true)
+  hideError()
+  agentChart.hidden = true
+  setProgress('Ищу оптовика…', 0.08)
+  const token = tokenInput.value.trim()
+  if (token) localStorage.setItem('moysklad.token', token)
+  savePrefs()
+
+  try {
+    const response = await fetch('/api/agent-dynamics', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        agentId: agentId || undefined,
+        year: chartYear(),
+        threshold: Number(thresholdInput.value),
+        postedOnly: postedInput.checked,
+        token,
+      }),
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      throw new Error(body.message || 'Не удалось построить динамику')
+    }
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let gotResult = false
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop()
+      for (const line of lines) {
+        if (!line.trim()) continue
+        const event = JSON.parse(line)
+        if (event.type === 'progress') {
+          const ratio = event.total ? Math.min(1, event.loaded / event.total) : 0.2
+          setProgress(event.message, Math.max(ratio, 0.08))
+        } else if (event.type === 'error') {
+          throw new Error(event.message)
+        } else if (event.type === 'result') {
+          gotResult = true
+          showAgentDynamics(event.dynamics)
+        }
+      }
+    }
+    if (!gotResult) throw new Error('Сбор прервался. Нажмите «Показать» ещё раз.')
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      setProgress('Остановлено', 0)
+      return
+    }
+    progressBox.hidden = true
+    showError(error.message || 'Не удалось построить динамику')
+  } finally {
+    setBusy(false)
+  }
+}
+
+function showAgentDynamics(dynamics) {
+  progressBox.hidden = true
+  clientDynamics = dynamics?.status === 'one' ? dynamics : null
+  agentChart.hidden = false
+  agentPdfButton.hidden = dynamics?.status !== 'one'
+  agentToggles.replaceChildren()
+  agentMatches.replaceChildren()
+  agentPlot.replaceChildren()
+  agentPlot.hidden = true
+  agentEmpty.hidden = true
+  if (dynamics?.status === 'many') {
+    const shown = dynamics.matches.slice(0, 20)
+    agentTitle.textContent = 'Выберите клиента'
+    agentHintText(dynamics.matches.length > shown.length
+      ? `Найдено ${dynamics.matches.length}. Показаны первые 20, уточните наименование.`
+      : `Найдено ${dynamics.matches.length}.`)
+    agentMatches.hidden = false
+    for (const match of shown) {
+      agentMatches.append(h('button', {
+        type: 'button',
+        class: 'chip',
+        onclick: () => runAgentDynamics(match.id),
+      }, match.archived ? `${match.name} · архив` : match.name))
+    }
+  } else if (dynamics?.status === 'none') {
+    agentTitle.textContent = 'Клиент'
+    agentHintText('Поиск по наименованию среди оптовиков.')
+    agentMatches.hidden = true
+    agentEmpty.hidden = false
+    agentEmpty.textContent = 'Такого оптовика нет.'
+  } else {
+    agentMatches.hidden = true
+    agentTitle.textContent = dynamics?.agent?.name || 'Клиент'
+    renderClientChart()
+  }
+  agentChart.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function agentHintText(text) {
+  const hint = document.querySelector('#agent-hint')
+  if (hint) hint.textContent = text
+}
+
+function renderClientChart() {
+  if (!clientDynamics) return
+  const year = clientDynamics.year
+  const rows = clientDynamics.months || []
+  const byMonth = new Map(rows.map((row) => [row.month, row]))
+  const points = Array.from({ length: 12 }, (_, index) => {
+    const month = `${year}-${String(index + 1).padStart(2, '0')}`
+    const row = byMonth.get(month)
+    if (!row) return null
+    return {
+      month,
+      sales: finiteChart(row.sales),
+      profit: finiteChart(row.profit),
+      netProfit: finiteChart(row.netProfit),
+      missed: finiteChart(row.missed),
+      markup: finiteChart(row.averageMarkup),
+    }
+  })
+  agentToggles.replaceChildren(...CLIENT_SERIES.map((series) => {
+    const on = seriesOn(series.id)
+    const button = h('button', {
+      type: 'button',
+      class: on ? 'year-toggle is-on' : 'year-toggle',
+      'aria-pressed': on ? 'true' : 'false',
+      onclick: () => setSeries(series.id, !on),
+    })
+    const swatch = h('i')
+    swatch.style.setProperty('--swatch', series.color)
+    button.append(swatch, series.label)
+    return button
+  }))
+  const saved = points.some(Boolean)
+  const selected = CLIENT_SERIES.filter((series) => seriesOn(series.id))
+  const active = selected.filter((series) => points.some((point) => point && point[series.key] != null))
+  agentPlot.replaceChildren()
+  if (!saved || active.length === 0) {
+    agentPlot.hidden = true
+    agentEmpty.hidden = false
+    agentHintText('Деньги на одной шкале, наценка — на правой')
+    agentEmpty.textContent = !saved
+      ? `За ${year} год отгрузок и продаж нет.`
+      : selected.length === 0
+        ? 'Выберите показатель.'
+        : 'Для выбранных показателей нет чисел.'
+    return
+  }
+  const moneyOn = active.some((series) => series.unit === 'money')
+  const percentOn = active.some((series) => series.unit === 'percent')
+  agentHintText(moneyOn && percentOn
+    ? `${year}. Деньги на одной шкале, наценка — на правой`
+    : percentOn
+      ? `${year}. Средняя наценка за месяц`
+      : `${year}. Суммы за месяц`)
+  agentPlot.hidden = false
+  agentEmpty.hidden = true
+  agentPlot.append(yearChartSvg(points, active, { tipId: 'agent-tip', labels: true }), yearTip('agent-tip'))
+}
+
+async function downloadAgentPdf() {
+  if (!clientDynamics?.agent) return
+  const series = CLIENT_SERIES.filter((item) => seriesOn(item.id)).map((item) => item.id)
+  if (!series.length) {
+    showError('Выберите показатель.')
+    return
+  }
+  agentPdfButton.disabled = true
+  hideError()
+  try {
+    const response = await fetch('/api/agent-pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agentName: clientDynamics.agent.name,
+        year: clientDynamics.year,
+        months: clientDynamics.months || [],
+        documents: clientDynamics.documents || [],
+        series,
+        threshold: Number(thresholdInput.value),
+      }),
+    })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      throw new Error(body.message || 'Не удалось собрать PDF')
+    }
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    const safeName = String(clientDynamics.agent.name || 'клиент').replace(/[\\/:*?"<>|]+/g, ' ').trim()
+    link.href = url
+    link.download = `продажи-${safeName}-${clientDynamics.year}.pdf`
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    showError(error.message || 'Не удалось собрать PDF')
+  } finally {
+    agentPdfButton.disabled = false
   }
 }
 
@@ -1120,6 +1354,13 @@ const YEAR_SERIES = [
   { id: 'profit', key: 'profit', label: 'Прибыль', unit: 'money', color: '#b7791f' },
   { id: 'missed', key: 'missed', label: 'Упущено', unit: 'money', color: '#d64545' },
 ]
+const CLIENT_SERIES = [
+  YEAR_SERIES[0],
+  YEAR_SERIES[1],
+  YEAR_SERIES[2],
+  { id: 'net', key: 'netProfit', label: 'Чистая прибыль', unit: 'money', color: '#1d4e89' },
+  YEAR_SERIES[3],
+]
 const YEAR_MONTHS = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
 const YEAR_MONTHS_FULL = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь']
 const CHART_KEY = 'moysklad.chart'
@@ -1145,6 +1386,7 @@ function setSeries(id, on) {
   const next = { ...chartSelection(), [id]: on }
   localStorage.setItem(CHART_KEY, JSON.stringify(next))
   renderYearChart(chartYear(), yearRows)
+  renderClientChart()
 }
 
 async function loadYearChart() {
@@ -1195,7 +1437,7 @@ function renderYearChart(year, rows) {
   const saved = points.some(Boolean)
   const selected = YEAR_SERIES.filter((series) => seriesOn(series.id))
   const active = selected.filter((series) => points.some((point) => point && point[series.key] != null))
-  const yearHint = document.querySelector('.year-head .hint')
+  const yearHint = document.querySelector('#year-hint')
   yearPlot.replaceChildren()
   if (!saved || active.length === 0) {
     yearPlot.hidden = true
@@ -1224,11 +1466,13 @@ function finiteChart(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
-function yearTip() {
-  return h('div', { class: 'year-tip', id: 'year-tip', hidden: true })
+function yearTip(id = 'year-tip') {
+  return h('div', { class: 'year-tip', id, hidden: true })
 }
 
-function yearChartSvg(points, active) {
+function yearChartSvg(points, active, options = {}) {
+  const tipId = options.tipId || 'year-tip'
+  const labelsOn = Boolean(options.labels)
   const moneySeries = active.filter((series) => series.unit === 'money')
   const percentSeries = active.filter((series) => series.unit === 'percent')
   const threshold = Number(thresholdInput.value)
@@ -1237,11 +1481,11 @@ function yearChartSvg(points, active) {
   if (percentSeries.length && Number.isFinite(threshold)) percentValues.push(threshold)
   const percentExtent = chartExtent(percentValues)
   const width = 760
-  const height = 248
   const left = 58
   const right = moneySeries.length && percentSeries.length ? 52 : 16
-  const top = 16
+  const top = labelsOn ? 78 : 16
   const bottom = 28
+  const height = labelsOn ? 310 : 248
   const plotWidth = width - left - right
   const plotHeight = height - top - bottom
   const slot = plotWidth / 12
@@ -1274,16 +1518,35 @@ function yearChartSvg(points, active) {
         if (value == null) return
         const y = yMoney(value)
         const x = left + index * slot + (slot - inner) / 2 + seriesIndex * barWidth
+        const drawnWidth = Math.max(barWidth - 2, 1)
+        const barTop = Math.min(zero, y)
         svg.append(svgEl('rect', {
           x,
-          y: Math.min(zero, y),
-          width: Math.max(barWidth - 2, 1),
+          y: barTop,
+          width: drawnWidth,
           height: Math.max(Math.abs(zero - y), 1),
           rx: 2,
           fill: series.color,
         }))
       })
     })
+    if (labelsOn) {
+      points.forEach((point, index) => {
+        if (!point) return
+        let labelY = 12
+        const labelX = left + index * slot + 2
+        for (const series of moneySeries) {
+          const value = point[series.key]
+          if (value == null) continue
+          const label = svgText(labelX, labelY, axisMoney(value))
+          label.style.fill = series.color
+          label.style.fontSize = '10px'
+          label.style.fontWeight = '700'
+          svg.append(label)
+          labelY += 12
+        }
+      })
+    }
   }
   for (const series of percentSeries) {
     for (const run of chartRuns(points, series.key)) {
@@ -1340,7 +1603,7 @@ function yearChartSvg(points, active) {
       hover.setAttribute('width', String(slot))
       hover.setAttribute('height', String(plotHeight))
       hover.setAttribute('visibility', point ? 'visible' : 'hidden')
-      showYearTip(points, active, index, left, slot, width)
+      showYearTip(points, active, index, left, slot, width, tipId)
     })
     hit.addEventListener('click', () => {
       if (!point) return
@@ -1351,14 +1614,14 @@ function yearChartSvg(points, active) {
   })
   svg.addEventListener('pointerleave', () => {
     hover.setAttribute('visibility', 'hidden')
-    const tip = document.querySelector('#year-tip')
+    const tip = document.querySelector(`#${tipId}`)
     if (tip) tip.hidden = true
   })
   return svg
 }
 
-function showYearTip(points, active, index, left, slot, width) {
-  const tip = document.querySelector('#year-tip')
+function showYearTip(points, active, index, left, slot, width, tipId = 'year-tip') {
+  const tip = document.querySelector(`#${tipId}`)
   const point = points[index]
   if (!tip || !point) {
     if (tip) tip.hidden = true

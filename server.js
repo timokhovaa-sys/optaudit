@@ -4,8 +4,9 @@ import { readFile } from 'node:fs/promises'
 import { dirname, extname, join, normalize, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WHOLESALE_GROUP } from './src/markup.js'
+import { renderSalesPdf, salesPdfPayload, salesReportHtml } from './src/sales-pdf.js'
 import { createClient } from './src/moysklad.js'
-import { buildOrderCheck, buildReport, refreshPriceCuts } from './src/report.js'
+import { buildAgentDynamics, buildOrderCheck, buildReport, refreshPriceCuts } from './src/report.js'
 import { openStore } from './src/store.js'
 
 const root = dirname(fileURLToPath(import.meta.url))
@@ -62,7 +63,7 @@ function readBody(req) {
     let size = 0
     req.on('data', (chunk) => {
       size += chunk.length
-      if (size > 64_000) {
+      if (size > 2_000_000) {
         reject(Object.assign(new Error('Слишком большой запрос'), { statusCode: 413 }))
         req.destroy()
         return
@@ -177,6 +178,66 @@ const server = createServer(async (req, res) => {
       } catch (error) {
         if (error?.name === 'AbortError') return
         write({ type: 'error', message: error?.message || 'Не удалось проверить заказ' })
+        console.error(error?.message || error)
+      } finally {
+        if (!res.writableEnded) res.end()
+      }
+      return
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/agent-pdf') {
+      const body = await readBody(req)
+      const payload = salesPdfPayload(body)
+      const pdf = await renderSalesPdf(salesReportHtml(payload))
+      res.writeHead(200, {
+        'Content-Type': 'application/pdf',
+        'Content-Length': pdf.length,
+        'Cache-Control': 'no-store',
+      })
+      res.end(pdf)
+      return
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/agent-dynamics') {
+      const body = await readBody(req)
+      const token = resolveToken(body.token)
+      const controller = new AbortController()
+      const stop = () => {
+        if (!res.writableEnded) controller.abort()
+      }
+      req.on('aborted', () => controller.abort())
+      res.on('close', stop)
+
+      res.writeHead(200, {
+        'Content-Type': 'application/x-ndjson; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        'X-Content-Type-Options': 'nosniff',
+      })
+
+      const write = (event) => {
+        if (!res.writableEnded) res.write(`${JSON.stringify(event)}\n`)
+      }
+
+      const started = Date.now()
+      try {
+        const dynamics = await buildAgentDynamics({
+          client: createClient(token),
+          name: body.name,
+          agentId: body.agentId,
+          year: body.year,
+          group: WHOLESALE_GROUP,
+          threshold: body.threshold ?? 18,
+          postedOnly: body.postedOnly !== false,
+          signal: controller.signal,
+          onProgress: (progress) => write({ type: 'progress', ...progress }),
+        })
+        write({ type: 'result', dynamics, elapsedMs: Date.now() - started })
+        console.log(
+          `agent-dynamics «${dynamics.agent?.name || body.name || ''}» status=${dynamics.status} months=${dynamics.months.length}`,
+        )
+      } catch (error) {
+        if (error?.name === 'AbortError') return
+        write({ type: 'error', message: error?.message || 'Не удалось построить динамику' })
         console.error(error?.message || error)
       } finally {
         if (!res.writableEnded) res.end()

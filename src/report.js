@@ -2,6 +2,8 @@ import { writeFileSync } from 'node:fs'
 import { API_ROOT, MoySkladError, fetchAll } from './moysklad.js'
 import { attachPriceCuts, priceCuts } from './price-cut.js'
 import {
+  agentDocuments,
+  agentMonthPoints,
   assertGroupName,
   assertThreshold,
   averageMarkup,
@@ -12,6 +14,8 @@ import {
   missedProfit,
   monthBounds,
   periodLabel,
+  selectAgentsByName,
+  yearBounds,
   summarizeShipment,
   tagVariants,
   addSupplyPrices,
@@ -851,6 +855,100 @@ export function documentShare(shipments) {
     share[kind][bucket] += 1
   }
   return share
+}
+
+export async function buildAgentDynamics({
+  client,
+  name,
+  agentId,
+  year,
+  group,
+  threshold,
+  postedOnly = true,
+  signal,
+  onProgress,
+}) {
+  const progress = (event) => onProgress?.(event)
+  const limit = assertThreshold(threshold)
+  const bounds = yearBounds(year)
+  const groupName = assertGroupName(group)
+  const agents = await loadCounterparties(client, groupName, signal, progress)
+  let agent = null
+  if (agentId) {
+    agent = agents.find((item) => item.id === agentId) || null
+    if (!agent) throw new Error('Контрагент не в группе оптовики')
+  } else {
+    const picked = selectAgentsByName(agents, name)
+    if (picked.status === 'short') throw new Error('Введите хотя бы две буквы наименования')
+    if (picked.status !== 'one') {
+      return {
+        year: bounds.year,
+        threshold: limit,
+        postedOnly,
+        status: picked.status,
+        matches: picked.matches.map(({ id, name: agentName, archived }) => ({ id, name: agentName, archived })),
+        agent: null,
+        months: [],
+      }
+    }
+    agent = agents.find((item) => item.id === picked.matches[0].id)
+  }
+
+  const documents = []
+  for (const source of SALE_DOCUMENTS) {
+    const rows = await loadDocuments(client, {
+      ...source,
+      bounds,
+      postedOnly,
+      agents: [agent],
+      signal,
+      onProgress: progress,
+    })
+    documents.push(...rows)
+  }
+
+  let done = 0
+  const loaded = await mapPool(documents, 2, async (document) => {
+    const positions = await fetchAll(
+      client,
+      `/entity/${document.kind}/${document.id}/positions`,
+      { expand: 'assortment' },
+      { pageLimit: 1000, signal },
+    )
+    done += 1
+    progress({
+      message: `Позиции: ${done} из ${documents.length}`,
+      loaded: done,
+      total: documents.length,
+    })
+    return { document, positions }
+  })
+
+  const timelines = await loadSupplyTimelines(client, loaded, postedOnly, progress, signal)
+  const shipments = loaded.map(({ document, positions }) => presentShipment(
+    document,
+    positions,
+    limit,
+    new Map([[agent.id, agent]]),
+    (position, demand) => lastSupplyUnitMinor(
+      timelines,
+      position.assortment,
+      demand.customerOrder?.moment || demand.moment,
+    ),
+  ))
+  const months = agentMonthPoints(shipments, limit, bounds.year)
+  const shipmentRows = agentDocuments(shipments, bounds.year, limit)
+  for (const shipment of shipments) delete shipment.lines
+  return {
+    year: bounds.year,
+    threshold: limit,
+    postedOnly,
+    status: 'one',
+    matches: [],
+    agent: { id: agent.id, name: agent.name || 'Контрагент' },
+    months,
+    documents: shipmentRows,
+  }
 }
 
 function emptyReport({ month, group, threshold, postedOnly, employee, emptyReason, suggestions }) {
