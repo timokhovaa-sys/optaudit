@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, extname, join, normalize, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { handleSales } from './sales/src/http.js'
 import { WHOLESALE_GROUP } from './src/markup.js'
 import { renderSalesPdf, salesPdfPayload, salesReportHtml } from './src/sales-pdf.js'
 import { createClient } from './src/moysklad.js'
@@ -121,6 +122,11 @@ async function serveStatic(req, res, pathname) {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || '/', 'http://127.0.0.1')
   try {
+    if (url.pathname === '/sales' || url.pathname.startsWith('/sales/')) {
+      await handleSales(req, res, url, { createClient })
+      return
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/status') {
       sendJson(res, 200, { hasToken: Boolean(process.env.MOYSKLAD_TOKEN?.trim()) })
       return

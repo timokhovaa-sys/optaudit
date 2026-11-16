@@ -58,7 +58,7 @@ export function createClient(token) {
   const authorization = authHeader(token)
   const limiter = createRateLimiter()
 
-  async function send(path, params, signal) {
+  async function send(path, params, signal, { method = 'GET', body } = {}) {
     const url = buildUrl(path, params)
     for (let attempt = 0; attempt < 8; attempt += 1) {
       throwIfAborted(signal)
@@ -66,16 +66,19 @@ export function createClient(token) {
       let response
       try {
         response = await fetch(url, {
+          method,
           headers: {
             Authorization: authorization,
             Accept: 'application/json;charset=utf-8',
+            ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
           },
+          body: body === undefined ? undefined : JSON.stringify(body),
           signal,
         })
         limiter.note(response.headers)
         if (response.status === 429 || response.status === 503) {
-          const body = await readJson(response)
-          limiter.penalize(Math.max(retryDelay(response.headers), 3000), { parallel: isParallelLimit(response, body) })
+          const bodyJson = await readJson(response)
+          limiter.penalize(Math.max(retryDelay(response.headers), 3000), { parallel: isParallelLimit(response, bodyJson) })
           continue
         }
       } finally {
@@ -92,6 +95,9 @@ export function createClient(token) {
   return {
     async get(path, params = {}, signal) {
       return send(path, params, signal)
+    },
+    async post(path, body, signal) {
+      return send(path, {}, signal, { method: 'POST', body })
     },
   }
 }

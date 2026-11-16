@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Возвраты | МойСклад</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23111111'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-size='12' font-family='sans-serif' fill='%23f5b942'%3EMC%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/sales/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">К содержимому</a>
+
+  <header class="top">
+    <div class="brand"><span class="logo">МС</span> Возвраты</div>
+    <div class="top-user">
+      <span id="account-name">МойСклад</span>
+    </div>
+  </header>
+
+  <main class="page" id="main-content">
+    <div class="page-head">
+      <h1>Возвраты</h1>
+    </div>
+
+    <form id="filters" class="panel filters">
+      <div class="field field-month">
+        <button id="month-button" class="month-button" type="button" aria-labelledby="month-label month-caption" aria-haspopup="dialog" aria-expanded="false">
+          <span class="month-copy">
+            <span id="month-label" class="float-label">Месяц</span>
+            <span id="month-caption"></span>
+          </span>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"></rect>
+            <path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
+          </svg>
+        </button>
+        <input id="month" name="month" type="hidden" required>
+        <div id="month-pop" class="month-pop" role="dialog" aria-label="Выбор месяца" hidden>
+          <div class="month-year">
+            <button id="month-prev" class="month-nav" type="button" aria-label="Предыдущий год">‹</button>
+            <b id="month-year"></b>
+            <button id="month-next" class="month-nav" type="button" aria-label="Следующий год">›</button>
+          </div>
+          <div id="month-grid" class="month-grid"></div>
+        </div>
+      </div>
+      <label class="field field-grow">
+        <span class="control">
+          <input id="product" name="product" type="search" placeholder=" " autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="product-suggest">
+          <span class="float-label">Наименование, артикул или код</span>
+          <button class="clear" type="button" hidden aria-label="Очистить товар">×</button>
+          <div id="product-suggest" class="suggest" role="listbox" hidden></div>
+        </span>
+      </label>
+      <label class="field field-number">
+        <span class="control">
+          <input id="number" name="number" type="text" placeholder=" " autocomplete="off" spellcheck="false">
+          <span class="float-label">Продажа, отгрузка, заказ или сайт</span>
+          <button class="clear" type="button" hidden aria-label="Очистить номер">×</button>
+        </span>
+      </label>
+      <div class="filter-actions">
+        <button id="submit" class="btn btn-primary" type="submit">Найти</button>
+        <button id="stop" class="btn" type="button" disabled>Стоп</button>
+      </div>
+    </form>
+
+    <div id="progress" class="loader" hidden>
+      <div class="seek" aria-hidden="true">
+        <span class="seek-sheet"></span>
+        <span class="seek-sheet seek-sheet-back"></span>
+        <span class="seek-glass"></span>
+      </div>
+      <div class="loader-copy">
+        <div class="progress"><div class="bar" id="bar"></div></div>
+        <div id="progress-text" class="hint">Ищу…</div>
+      </div>
+    </div>
+
+    <div id="error" class="notice notice-danger" hidden>
+      <div id="error-text"></div>
+    </div>
+
+    <section id="results" class="stack" hidden>
+      <p id="summary" class="hint"></p>
+      <div id="sales" class="stack"></div>
+    </section>
+
+    <section id="cards" class="stack" hidden>
+      <div class="card-tabs" role="tablist">
+        <button type="button" id="tab-draft" class="card-tab is-on" role="tab" aria-selected="true">
+          Черновики
+          <span class="card-tab-count" id="draft-count">0</span>
+        </button>
+        <button type="button" id="tab-done" class="card-tab" role="tab" aria-selected="false">
+          Выполненные
+          <span class="card-tab-count" id="done-count">0</span>
+        </button>
+      </div>
+      <div id="draft-list" class="stack"></div>
+      <div id="done-list" class="stack" hidden></div>
+    </section>
+  </main>
+
+  <script type="module" src="/sales/app.js"></script>
+</body>
+</html>
